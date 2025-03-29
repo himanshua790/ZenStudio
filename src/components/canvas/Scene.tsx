@@ -6,7 +6,7 @@ import {
   TransformControls,
   PerspectiveCamera,
 } from "@react-three/drei";
-import { Suspense, useEffect } from "react";
+import { Suspense, useEffect, useCallback } from "react";
 import { useStore } from "../../store";
 import { Box, Plane, Sphere } from "./objects/BasicShapes";
 import { ShortcutOverlay } from "../ui/ShortcutOverlay";
@@ -17,8 +17,17 @@ import { DebugExample } from "./DebugExample";
 const SceneHandlers = () => {
   // Include selectedObjectId in the destructured values to ensure component re-renders
   // when selectedObjectId changes
-  const { getSelectedObject, transformMode, selectObject, selectedObjectId } =
-    useStore();
+  const {
+    getSelectedObject,
+    transformMode,
+    selectObject,
+    selectedObjectId,
+    saveInitialTransform,
+    applyTransform,
+    shortcutsEnabled,
+    undo,
+    redo,
+  } = useStore();
 
   // Now this value will be recalculated when selectedObjectId changes
   const selectedObject = getSelectedObject();
@@ -32,6 +41,62 @@ const SceneHandlers = () => {
     event.stopPropagation();
   };
 
+  // Track transform starts to save initial state for undo
+  const handleTransformStart = useCallback(() => {
+    if (selectedObject) {
+      saveInitialTransform(selectedObject);
+    }
+  }, [selectedObject, saveInitialTransform]);
+
+  // Track transform ends to create undo command
+  const handleTransformEnd = useCallback(() => {
+    if (selectedObject) {
+      applyTransform(selectedObject.uuid, {
+        position: selectedObject.position.clone(),
+        rotation: selectedObject.rotation.clone(),
+        scale: selectedObject.scale.clone(),
+      });
+    }
+  }, [selectedObject, applyTransform]);
+
+  // Handle keyboard shortcuts for undo/redo
+  useEffect(() => {
+    if (!shortcutsEnabled) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Skip if user is typing in an input
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement
+      ) {
+        return;
+      }
+
+      // Undo: Ctrl+Z or Command+Z
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        e.key.toLowerCase() === "z" &&
+        !e.shiftKey
+      ) {
+        e.preventDefault();
+        undo();
+      }
+
+      // Redo: Ctrl+Y or Ctrl+Shift+Z or Command+Shift+Z
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        (e.key.toLowerCase() === "y" ||
+          (e.key.toLowerCase() === "z" && e.shiftKey))
+      ) {
+        e.preventDefault();
+        redo();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [undo, redo, shortcutsEnabled]);
+
   return (
     <group onClick={handleClick}>
       {/* Invisible background plane to catch clicks */}
@@ -42,17 +107,31 @@ const SceneHandlers = () => {
 
       {/* Transform controls for the selected object */}
       {selectedObject && (
-        <TransformControls object={selectedObject} mode={transformMode} />
+        <TransformControls
+          object={selectedObject}
+          mode={transformMode}
+          onMouseDown={handleTransformStart}
+          onMouseUp={handleTransformEnd}
+          onObjectChange={() => {
+            // This keeps the store updated with transform changes
+            if (selectedObject) {
+              selectedObject.updateMatrix();
+            }
+          }}
+        />
       )}
     </group>
   );
 };
 
 export const Scene = () => {
-  const { transformMode, setTransformMode, selectObject } = useStore();
+  const { transformMode, setTransformMode, selectObject, shortcutsEnabled } =
+    useStore();
 
   // Add keyboard shortcuts
   useEffect(() => {
+    if (!shortcutsEnabled) return;
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if (
         e.target instanceof HTMLInputElement ||
@@ -81,7 +160,7 @@ export const Scene = () => {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [setTransformMode, selectObject]);
+  }, [setTransformMode, selectObject, shortcutsEnabled]);
 
   // Add a floor to the scene
   useEffect(() => {
@@ -92,6 +171,7 @@ export const Scene = () => {
   return (
     <div className="w-full h-full relative">
       <ShortcutOverlay currentMode={transformMode} />
+      <DebugExample />
       <Canvas shadows>
         <Suspense fallback={null}>
           <ambientLight intensity={0.5} />
